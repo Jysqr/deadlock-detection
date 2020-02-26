@@ -1,16 +1,15 @@
 package main
 
 import (
-	"deadlockdetection/node"
+	"deadlockdetection/DeadlockNode"
 	"fmt"
 	"github.com/perlin-network/noise"
 	"github.com/perlin-network/noise/kademlia"
-	"strconv"
 	"time"
 )
 
 var (
-	numNode       = 8
+	numNode       = 15
 	thisNode, err = noise.NewNode(noise.WithNodeBindPort(39999))
 	network       = kademlia.New()
 )
@@ -20,15 +19,20 @@ func main() {
 	if err := thisNode.Listen(); err != nil {
 		panic(err)
 	}
-	address := thisNode.Addr()
+	initStruct := DeadlockNode.InitStruct{Address: thisNode.Addr()}
+	thisNode.Handle(func(ctx noise.HandlerContext) error {
+		fmt.Printf("Got a message from  '%s %s'\n", ctx.ID().Address, string(ctx.Data()))
+		return nil
+	})
 	//var run = true
 	//get int from gui
 	for i := 0; i < numNode; i++ {
-		fmt.Println(strconv.Itoa(i) + " init")
 		go func(i int) {
-			node.Start(i, address)
+			DeadlockNode.NewDeadlockNode(&initStruct)
+
 		}(i)
 	}
 	time.Sleep(3 * time.Second)
 	fmt.Printf("Boss discovered %d peer(s).\n", len(network.Discover()))
+
 }
