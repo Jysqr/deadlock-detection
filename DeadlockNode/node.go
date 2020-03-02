@@ -14,11 +14,12 @@ type InitStruct struct {
 	Address string
 }
 type DeadlockNode struct {
-	network  *kademlia.Protocol
-	node     *noise.Node
-	err      error
-	bossAddr string
-	step     *sync.Mutex
+	network   *kademlia.Protocol
+	node      *noise.Node
+	err       error
+	bossAddr  string
+	step      *sync.Mutex
+	dependant []bool
 }
 
 func NewDeadlockNode(initStruct *InitStruct, s *sync.Mutex) *DeadlockNode {

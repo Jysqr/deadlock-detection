@@ -2,7 +2,7 @@ package MessageTypes
 
 import (
 	"encoding/json"
-	_ "github.com/perlin-network/noise"
+	"github.com/perlin-network/noise"
 )
 
 type BossToNode struct {
@@ -31,6 +31,22 @@ func (e NodeToBoss) Marshal() []byte {
 
 func UnmarshalNodeToBoss(b []byte) (*NodeToBoss, error) {
 	var msg NodeToBoss
+	err := json.Unmarshal(b, msg)
+	return &msg, err
+}
+
+type Probe struct {
+	processI noise.ID
+	processJ noise.ID
+	processK noise.ID
+}
+
+func (e Probe) Marshal() []byte {
+	content, _ := json.Marshal(e)
+	return content
+}
+func Unmarshalprobe(b []byte) (*Probe, error) {
+	var msg Probe
 	err := json.Unmarshal(b, msg)
 	return &msg, err
 }
