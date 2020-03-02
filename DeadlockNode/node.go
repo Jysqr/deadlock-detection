@@ -14,6 +14,7 @@ type InitStruct struct {
 	Address string
 }
 type DeadlockNode struct {
+	online    bool
 	network   *kademlia.Protocol
 	node      *noise.Node
 	err       error
@@ -26,6 +27,7 @@ func NewDeadlockNode(initStruct *InitStruct, s *sync.Mutex) *DeadlockNode {
 	initStruct.mutex.Lock() //a listen cannot be called concurrently, so block before listen
 	newNode, error := noise.NewNode()
 	dn := &DeadlockNode{
+		online:   true,
 		network:  kademlia.New(),
 		node:     newNode,
 		err:      error,
@@ -40,22 +42,20 @@ func NewDeadlockNode(initStruct *InitStruct, s *sync.Mutex) *DeadlockNode {
 	if _, err := dn.node.Ping(context.TODO(), dn.bossAddr); err != nil {
 		panic(err)
 	}
-	dn.node.RegisterMessage(&MessageTypes.BossToNode{}, MessageTypes.UnmarshalBossToNode) //todo figure out while this doesnt seem to do anything
-	fmt.Println(dn.node.RegisterMessage(&MessageTypes.NodeToBoss{}, MessageTypes.UnmarshalNodeToBoss))
+	dn.node.RegisterMessage(MessageTypes.BossToNode{}, MessageTypes.UnmarshalBossToNode)
+	dn.node.RegisterMessage(MessageTypes.NodeToBoss{}, MessageTypes.UnmarshalNodeToBoss)
 	return dn
 }
 
-func (n *DeadlockNode) Start() {
+func (dn *DeadlockNode) Start() {
 	for i := 0; i < 6; i++ {
-		s := fmt.Sprintf("%d step for %s complete", i, n.node.ID())
-		msg := MessageTypes.NodeToBoss{Report: s}
-		n.step.Lock()
-		fmt.Printf("%s has stepped\n", n.node.ID())
-		err := n.node.SendMessage(context.TODO(), n.bossAddr, &msg)
-		if err != nil {
-			fmt.Println(err)
+		s := fmt.Sprintf("%d step for %s complete", i, dn.node.ID())
+		dn.step.Lock()
+
+		if err := dn.node.SendMessage(context.TODO(), dn.bossAddr, MessageTypes.NodeToBoss{Report: s}); err != nil {
+			panic(err)
 		}
-		n.step.Unlock()
+		dn.step.Unlock()
 
 	}
 

@@ -14,10 +14,10 @@ func (e BossToNode) Marshal() []byte {
 	return content
 }
 
-func UnmarshalBossToNode(b []byte) (*BossToNode, error) {
+func UnmarshalBossToNode(b []byte) (BossToNode, error) {
 	var msg BossToNode
 	err := json.Unmarshal(b, msg)
-	return &msg, err
+	return msg, err
 }
 
 type NodeToBoss struct {
@@ -29,10 +29,10 @@ func (e NodeToBoss) Marshal() []byte {
 	return content
 }
 
-func UnmarshalNodeToBoss(b []byte) (*NodeToBoss, error) {
+func UnmarshalNodeToBoss(b []byte) (NodeToBoss, error) {
 	var msg NodeToBoss
-	err := json.Unmarshal(b, msg)
-	return &msg, err
+	err := json.Unmarshal(b, &msg)
+	return msg, err
 }
 
 type Probe struct {
@@ -45,8 +45,8 @@ func (e Probe) Marshal() []byte {
 	content, _ := json.Marshal(e)
 	return content
 }
-func Unmarshalprobe(b []byte) (*Probe, error) {
+func Unmarshalprobe(b []byte) (Probe, error) {
 	var msg Probe
-	err := json.Unmarshal(b, msg)
-	return &msg, err
+	err := json.Unmarshal(b, &msg)
+	return msg, err
 }

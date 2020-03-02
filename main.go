@@ -27,9 +27,9 @@ func main() {
 
 	bossNode.Handle(func(ctx noise.HandlerContext) error {
 		msgObj, _ := ctx.DecodeMessage()
-		msg, ok := msgObj.(*MessageTypes.NodeToBoss)
+		msg, ok := msgObj.(MessageTypes.NodeToBoss)
 		if !ok {
-			return nil
+			panic(ok)
 		}
 		go messageHandler(msg)
 		return nil
@@ -39,13 +39,13 @@ func main() {
 	nodeSync = Barrier.NewBarrier(numNode)
 	for i := 0; i < numNode; i++ { //builds the nodes and gives them their init parameters
 		m := nodeSync.Mutex()
-		go func(i int, mutex *sync.Mutex) {
+		go func(i int, mutex *sync.Mutex) { //todo this doesn't need to be concurrent only the start
 			dn := DeadlockNode.NewDeadlockNode(&initStruct, mutex)
 			go dn.Start()
 		}(i, m)
 	}
-	bossNode.RegisterMessage(&MessageTypes.BossToNode{}, MessageTypes.UnmarshalBossToNode)
-	bossNode.RegisterMessage(&MessageTypes.NodeToBoss{}, MessageTypes.UnmarshalNodeToBoss)
+	bossNode.RegisterMessage(MessageTypes.BossToNode{}, MessageTypes.UnmarshalBossToNode)
+	bossNode.RegisterMessage(MessageTypes.NodeToBoss{}, MessageTypes.UnmarshalNodeToBoss)
 	time.Sleep(3 * time.Second)
 	fmt.Printf("Boss discovered %d peer(s).\n", len(network.Discover()))
 	_ = nodeSync.Step()
@@ -57,8 +57,8 @@ func main() {
 	for !nodeSync.Ready {
 
 	}
-
+	time.Sleep(10 * time.Second)
 }
-func messageHandler(msg *MessageTypes.NodeToBoss) {
+func messageHandler(msg MessageTypes.NodeToBoss) {
 	fmt.Println(msg.Report)
 }
