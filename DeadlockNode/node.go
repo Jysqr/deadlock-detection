@@ -9,10 +9,6 @@ import (
 	"sync"
 )
 
-type InitStruct struct {
-	mutex   sync.Mutex
-	Address string
-}
 type DeadlockNode struct {
 	online    bool
 	network   *kademlia.Protocol
@@ -23,19 +19,17 @@ type DeadlockNode struct {
 	dependant []bool
 }
 
-func NewDeadlockNode(initStruct *InitStruct, s *sync.Mutex) *DeadlockNode {
-	initStruct.mutex.Lock() //a listen cannot be called concurrently, so block before listen
-	newNode, error := noise.NewNode()
+func NewDeadlockNode(address string, s *sync.Mutex) *DeadlockNode {
+	newNode, noiseError := noise.NewNode()
 	dn := &DeadlockNode{
 		online:   true,
 		network:  kademlia.New(),
 		node:     newNode,
-		err:      error,
-		bossAddr: initStruct.Address,
+		err:      noiseError,
+		bossAddr: address,
 		step:     s,
 	}
 	dn.node.Bind(dn.network.Protocol())
-	initStruct.mutex.Unlock()
 	if err := dn.node.Listen(); err != nil {
 		panic(err)
 	}

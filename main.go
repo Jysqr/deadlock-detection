@@ -7,15 +7,14 @@ import (
 	"fmt"
 	"github.com/perlin-network/noise"
 	"github.com/perlin-network/noise/kademlia"
-	"sync"
 	"time"
 )
 
 var (
-	numNode       = 3
-	nodeSync      = Barrier.NewBarrier(0)
-	bossNode, err = noise.NewNode(noise.WithNodeBindPort(39999))
-	network       = kademlia.New()
+	numNode     = 3
+	nodeSync    = Barrier.NewBarrier(0)
+	bossNode, _ = noise.NewNode(noise.WithNodeBindPort(39999))
+	network     = kademlia.New()
 )
 
 func main() {
@@ -23,7 +22,6 @@ func main() {
 	if err := bossNode.Listen(); err != nil {
 		panic(err)
 	}
-	initStruct := DeadlockNode.InitStruct{Address: bossNode.Addr()} //contains the init parameters
 
 	bossNode.Handle(func(ctx noise.HandlerContext) error {
 		msgObj, _ := ctx.DecodeMessage()
@@ -39,10 +37,10 @@ func main() {
 	nodeSync = Barrier.NewBarrier(numNode)
 	for i := 0; i < numNode; i++ { //builds the nodes and gives them their init parameters
 		m := nodeSync.Mutex()
-		go func(i int, mutex *sync.Mutex) { //todo this doesn't need to be concurrent only the start
-			dn := DeadlockNode.NewDeadlockNode(&initStruct, mutex)
-			go dn.Start()
-		}(i, m)
+		dn := DeadlockNode.NewDeadlockNode(bossNode.Addr(), m)
+		go func(node *DeadlockNode.DeadlockNode) {
+			dn.Start()
+		}(dn)
 	}
 	bossNode.RegisterMessage(MessageTypes.BossToNode{}, MessageTypes.UnmarshalBossToNode)
 	bossNode.RegisterMessage(MessageTypes.NodeToBoss{}, MessageTypes.UnmarshalNodeToBoss)
