@@ -45,7 +45,7 @@ func (e Probe) Marshal() []byte {
 	content, _ := json.Marshal(e)
 	return content
 }
-func Unmarshalprobe(b []byte) (Probe, error) {
+func UnmarshalProbe(b []byte) (Probe, error) {
 	var msg Probe
 	err := json.Unmarshal(b, &msg)
 	return msg, err

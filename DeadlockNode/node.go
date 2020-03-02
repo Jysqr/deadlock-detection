@@ -38,6 +38,13 @@ func NewDeadlockNode(address string, s *sync.Mutex) *DeadlockNode {
 	}
 	dn.node.RegisterMessage(MessageTypes.BossToNode{}, MessageTypes.UnmarshalBossToNode)
 	dn.node.RegisterMessage(MessageTypes.NodeToBoss{}, MessageTypes.UnmarshalNodeToBoss)
+	dn.node.RegisterMessage(MessageTypes.Probe{}, MessageTypes.UnmarshalProbe)
+
+	dn.node.Handle(func(ctx noise.HandlerContext) error {
+		msgObj, _ := ctx.DecodeMessage()
+		//todo typeswitch to handle different messages
+		return nil
+	})
 	return dn
 }
 
