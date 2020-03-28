@@ -2,7 +2,7 @@ package DeadlockNode
 
 import (
 	"context"
-	"deadlockdetection/MessageTypes"
+	"deadlock-detection/MessageTypes"
 	"fmt"
 	"github.com/perlin-network/noise"
 	"github.com/perlin-network/noise/kademlia"
@@ -42,7 +42,7 @@ func NewDeadlockNode(address string, s *sync.Mutex) *DeadlockNode {
 
 	dn.node.Handle(func(ctx noise.HandlerContext) error {
 		msgObj, _ := ctx.DecodeMessage()
-		//todo typeswitch to handle different messages
+		fmt.Print(msgObj)
 		return nil
 	})
 	return dn

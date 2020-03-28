@@ -1,9 +1,9 @@
 package main
 
 import (
-	"deadlockdetection/Barrier"
-	"deadlockdetection/DeadlockNode"
-	"deadlockdetection/MessageTypes"
+	"deadlock-detection/Barrier"
+	"deadlock-detection/DeadlockNode"
+	"deadlock-detection/MessageTypes"
 	"fmt"
 	"github.com/perlin-network/noise"
 	"github.com/perlin-network/noise/kademlia"
