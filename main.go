@@ -1,7 +1,7 @@
 package main
 
 import (
-	"deadlock-detection/Barrier"
+	"context"
 	"deadlock-detection/DeadlockNode"
 	"deadlock-detection/MessageTypes"
 	"fmt"
@@ -12,51 +12,69 @@ import (
 
 var (
 	numNode     = 3
-	nodeSync    = Barrier.NewBarrier(0)
 	bossNode, _ = noise.NewNode(noise.WithNodeBindPort(39999))
 	network     = kademlia.New()
 )
 
 func main() {
 	bossNode.Bind(network.Protocol())
+	bossNode.RegisterMessage(MessageTypes.BossToNode{}, MessageTypes.UnmarshalBossToNode)
+	bossNode.RegisterMessage(MessageTypes.NodeToBoss{}, MessageTypes.UnmarshalNodeToBoss)
+	bossNode.RegisterMessage(MessageTypes.Probe{}, MessageTypes.UnmarshalProbe)
+	bossNode.RegisterMessage(MessageTypes.DeadLock{}, MessageTypes.UnmarshalDeadLock)
+	bossNode.Handle(func(ctx noise.HandlerContext) error {
+		msgObj, err := ctx.DecodeMessage()
+		if err != nil {
+			panic(err)
+		}
+		switch msg := msgObj.(type) {
+		case MessageTypes.Probe:
+		case MessageTypes.NodeToBoss:
+			go messageHandler(msg)
+		case MessageTypes.BossToNode:
+		case MessageTypes.DeadLock:
+			panic("DEADLOCK DETECTED") //todo: do thing with deadlock
+		}
+		return nil
+	})
 	if err := bossNode.Listen(); err != nil {
 		panic(err)
 	}
 
-	bossNode.Handle(func(ctx noise.HandlerContext) error {
-		msgObj, _ := ctx.DecodeMessage()
-		msg, ok := msgObj.(MessageTypes.NodeToBoss)
-		if !ok {
-			panic(ok)
-		}
-		go messageHandler(msg)
-		return nil
-	})
-
 	//get int from gui
-	nodeSync = Barrier.NewBarrier(numNode)
 	for i := 0; i < numNode; i++ { //builds the nodes and gives them their init parameters
-		m := nodeSync.Mutex()
-		dn := DeadlockNode.NewDeadlockNode(bossNode.Addr(), m)
+		dn := DeadlockNode.NewDeadlockNode(bossNode.Addr(), numNode)
 		go func(node *DeadlockNode.DeadlockNode) {
 			dn.Start()
 		}(dn)
 	}
-	bossNode.RegisterMessage(MessageTypes.BossToNode{}, MessageTypes.UnmarshalBossToNode)
-	bossNode.RegisterMessage(MessageTypes.NodeToBoss{}, MessageTypes.UnmarshalNodeToBoss)
-	time.Sleep(3 * time.Second)
-	fmt.Printf("Boss discovered %d peer(s).\n", len(network.Discover()))
-	_ = nodeSync.Step()
+
 	time.Sleep(2 * time.Second)
-	for !nodeSync.Ready {
 
-	}
-	_ = nodeSync.Step()
-	for !nodeSync.Ready {
-
-	}
-	time.Sleep(10 * time.Second)
+	messageAllCommand("shutdown", "")
+	messageAllCommand("step", "")
+	messageAllCommand("work", "1")
+	time.Sleep(5 * time.Second)
+	fmt.Println("exiting..")
 }
 func messageHandler(msg MessageTypes.NodeToBoss) {
-	fmt.Println(msg.Report)
+	fmt.Println("report: " + msg.Report)
 }
+
+func messageAllCommand(c string, p string) {
+	table := network.Table()
+	entries := table.Entries()
+	for _, con := range entries {
+		if err := bossNode.SendMessage(context.TODO(), con.Address, MessageTypes.BossToNode{Command: c, Param: p}); err != nil {
+			fmt.Println(err)
+		}
+	}
+}
+
+/*
+Possible boss to node Commands:
+shutdown
+step
+work + param
+setLocalDependence
+*/
