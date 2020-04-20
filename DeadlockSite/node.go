@@ -1,4 +1,4 @@
-package DeadlockNode
+package DeadlockSite
 
 import (
 	"context"
@@ -13,28 +13,33 @@ type DeadlockNode struct {
 	online              bool
 	block               bool
 	wait                bool
-	nodeCount           int
+	totalNodeCount      int
 	network             *kademlia.Protocol
 	node                *noise.Node
 	err                 error
 	bossAddr            string
-	dependant           []bool
+	dependant           map[string]bool
 	selfLocalDependence bool
 	queue               []noise.Serializable
+	currentWaitList     []noise.ID
+	siteDependency      noise.ID
+	MySite              *Site
 }
 
-func NewDeadlockNode(address string, count int) *DeadlockNode {
+func NewDeadlockNode(address string, count int, site *Site, depend noise.ID) *DeadlockNode {
 	newNode, noiseError := noise.NewNode()
 	dn := &DeadlockNode{
 		online:              true,
 		wait:                true,
-		nodeCount:           count,
+		totalNodeCount:      count,
 		block:               false,
 		selfLocalDependence: false,
 		network:             kademlia.New(),
 		node:                newNode,
 		err:                 noiseError,
 		bossAddr:            address,
+		siteDependency:      depend,
+		MySite:              site,
 	}
 	dn.node.Bind(dn.network.Protocol())
 
@@ -50,7 +55,7 @@ func NewDeadlockNode(address string, count int) *DeadlockNode {
 		}
 		deadlock, ok := msgObj.(MessageTypes.DeadLock) //checks if the message is alertign deadlock, takes precedence
 		if ok {
-			panic(deadlock.Deadlock + "DEADLOCK DECTECTED") //todo do somehing with deadlock
+			panic(deadlock.Deadlock + "DEADLOCK DETECTED") //todo do somehing with deadlock
 		} else {
 			dn.queue = dn.enqueue(dn.queue, msgObj)
 		}
@@ -136,7 +141,7 @@ func (dn *DeadlockNode) respondCommand(c string, p string) {
 	}
 }
 
-func (dn *DeadlockNode) sendProbe() {
+func (dn *DeadlockNode) sendProbe(i noise.ID, j noise.ID, k noise.ID) {
 	/*
 	   	Process of sending probe:
 
@@ -155,11 +160,7 @@ func (dn *DeadlockNode) sendProbe() {
 		dn.messageAllDeadlock(s)
 	} else {
 		//grouping sites probably required
-		MessageTypes.Probe{
-			ProcessI: dn.node.ID(),
-			ProcessJ: 4999,
-			ProcessK:, //todo fix this
-		}
+		//create probe after checking waitlist n shit
 	}
 }
 
@@ -186,14 +187,13 @@ func (dn *DeadlockNode) receiveProbe(probe MessageTypes.Probe) {
 	      4. Send probe (i, m, n) to the home site of process Pn if above conditions satisfy.
 
 	*/
-	if !dn.block && !dn.dependant[probe.ProcessI] && len(dn.queue) != 0 {
-		dn.dependant[probe.ProcessI] = true
-		myIDString := dn.node.ID().String()
-		processIString := probe.ProcessI.String()
-		if myIDString == processIString {
+	if !dn.block && !dn.dependant[probe.ProcessI.String()] && len(dn.queue) != 0 {
+		dn.dependant[probe.ProcessI.String()] = true
+		myID := dn.node.ID()
+		if myID.String() == probe.ProcessI.String() {
 			dn.messageAllDeadlock("Cyclical wait detected")
 		} else {
-			dn.sendProbe()
+			dn.sendProbe(probe.ProcessI, probe.ProcessI, probe.ProcessI) //todo this is completely wrong
 		}
 	}
 }
