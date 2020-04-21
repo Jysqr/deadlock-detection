@@ -6,14 +6,15 @@ import (
 
 type Site struct {
 	siteNodeCount  int
-	totalNodeCount int
+	TotalNodeCount int
 	NodeList       []*DeadlockNode
 }
 
 func NewSite(bossNodeAddr string, numNode int, totalNode int) *Site {
 	site := &Site{
 		siteNodeCount:  numNode,
-		totalNodeCount: totalNode,
+		TotalNodeCount: totalNode,
+		NodeList:       make([]*DeadlockNode, numNode),
 	}
 	for i := 0; i < numNode; i++ { //builds the nodes and gives them their init parameters
 		var dependence noise.ID
@@ -33,5 +34,11 @@ func NewSite(bossNodeAddr string, numNode int, totalNode int) *Site {
 		}(dn)
 		site.NodeList = append(site.NodeList, dn)
 	}
+	for i, siteNode := range site.NodeList {
+		if i < len(site.NodeList) {
+			siteNode.dependsOnMe = append(siteNode.dependsOnMe, site.NodeList[i+1].node.ID())
+		}
+	}
+
 	return site
 }

@@ -3,31 +3,37 @@ package DeadlockSite
 import (
 	"context"
 	"deadlock-detection/MessageTypes"
-	"deadlock-detection/resource"
 	"fmt"
+	"github.com/golang-collections/go-datastructures/queue"
 	"github.com/perlin-network/noise"
 	"github.com/perlin-network/noise/kademlia"
+	"math"
+	"math/rand"
+	"strconv"
+	"time"
 )
 
 type DeadlockNode struct {
 	online              bool
 	block               bool
 	wait                bool
+	workToken           int
 	totalNodeCount      int
 	network             *kademlia.Protocol
 	node                *noise.Node
-	err                 error
 	bossAddr            string
-	dependant           map[string]bool
+	dependant           map[string]bool //string is a node address
 	selfLocalDependence bool
-	queue               []noise.Serializable
-	currentWaitList     []noise.ID
-	siteDependency      noise.ID
+	messageQueue        *queue.PriorityQueue
+	workQueue           *queue.Queue
+	siteDependency      noise.ID       //this is for the algorithm
+	dependsOnMe         []noise.ID     //this is to know where to send completed work.
+	workReqList         map[string]int //string is a node address, fills with work completed by other nodes. producer/consumer
 	MySite              *Site
 }
 
 func NewDeadlockNode(address string, count int, site *Site, depend noise.ID) *DeadlockNode {
-	newNode, noiseError := noise.NewNode()
+	newNode, _ := noise.NewNode()
 	dn := &DeadlockNode{
 		online:              true,
 		wait:                true,
@@ -36,10 +42,15 @@ func NewDeadlockNode(address string, count int, site *Site, depend noise.ID) *De
 		selfLocalDependence: false,
 		network:             kademlia.New(),
 		node:                newNode,
-		err:                 noiseError,
 		bossAddr:            address,
+		workToken:           -1,
 		siteDependency:      depend,
 		MySite:              site,
+		messageQueue:        queue.NewPriorityQueue(50),
+		workReqList:         make(map[string]int),
+		dependant:           make(map[string]bool),
+		dependsOnMe:         make([]noise.ID, site.TotalNodeCount),
+		workQueue:           queue.New(50),
 	}
 	dn.node.Bind(dn.network.Protocol())
 
@@ -48,97 +59,182 @@ func NewDeadlockNode(address string, count int, site *Site, depend noise.ID) *De
 	dn.node.RegisterMessage(MessageTypes.Probe{}, MessageTypes.UnmarshalProbe)
 	dn.node.RegisterMessage(MessageTypes.DeadLock{}, MessageTypes.UnmarshalDeadLock)
 
-	dn.node.Handle(func(ctx noise.HandlerContext) error {
+	dn.node.Handle(func(ctx noise.HandlerContext) error { //anonymous function that determines what happens when a message is received
 		msgObj, err := ctx.DecodeMessage()
+		senderID := ctx.ID()
 		if err != nil {
 			panic(err)
 		}
-		deadlock, ok := msgObj.(MessageTypes.DeadLock) //checks if the message is alertign deadlock, takes precedence
+		message, ok := msgObj.(MessageTypes.MessageInterface) //checks if the message isn't malformed
 		if ok {
-			panic(deadlock.Deadlock + "DEADLOCK DETECTED") //todo do somehing with deadlock
-		} else {
-			dn.queue = dn.enqueue(dn.queue, msgObj)
+			wrapper := MessageTypes.MessageWrapper{
+				Message: message,
+				Sender:  senderID,
+			}
+			_ = dn.messageQueue.Put(wrapper)
 		}
 		return nil
 	})
+	dn.workReqList[depend.Address] = 0
 	if err := dn.node.Listen(); err != nil {
 		panic(err)
 	}
-	if _, err := dn.node.Ping(context.TODO(), dn.bossAddr); err != nil {
-		panic(err)
+	if _, err := dn.node.Ping(context.TODO(), dn.bossAddr); err != nil { //making sure that node can communicate with boss
+		panic(err) //this error is fatal for the node.
 	}
 	return dn
 }
 
 func (dn *DeadlockNode) Start() {
-
 	for dn.online {
-		if len(dn.queue) == 0 {
+		go dn.emptyMessageQueue() //goroutine to parse messages into work and tokens
+		if dn.messageQueue.Empty() && dn.workQueue.Empty() {
 			s := fmt.Sprintf("node %s is waiting", dn.node.ID().Address)
-			if err := dn.node.SendMessage(context.TODO(), dn.bossAddr, MessageTypes.NodeToBoss{Report: s}); err != nil {
-				panic(err)
-			}
+			dn.messageBoss(s)
 			dn.wait = true
-		} else {
-			for len(dn.queue) != 0 { //do all work sent
-				fmt.Println("queuetime")
-				var msgObj noise.Serializable
-				dn.queue, msgObj = dn.dequeue(dn.queue)
-				switch v := msgObj.(type) {
-				case MessageTypes.Probe:
-					dn.receiveProbe(v)
-				case MessageTypes.BossToNode:
-					dn.respondCommand(v.Command, v.Param)
-				}
+		} else if !dn.workQueue.Empty() && dn.workToken != 0 {
+			dn.workToken = dn.workToken - 1
+			value, err := dn.workQueue.Get(1)
+			if err != nil {
+				fmt.Println(err)
+			} else {
+				dn.doWork(value[0].(int))
 			}
-		}
-		for dn.wait {
-			//waiting for next continue command
+			s := fmt.Sprintf("node %s is waiting after completing work", dn.node.ID().Address)
+			dn.messageBoss(s)
+			dn.wait = true
+		} else if dn.workQueue.Empty() || dn.workToken == 0 {
+
 		}
 
 	}
+	for dn.wait {
+		//waiting for next step command
+	}
+
 	fmt.Println("Node Shut Down")
 }
 
-func (dn *DeadlockNode) respondCommand(c string, p string) {
-	switch c {
-	case "shutdown":
-		s := fmt.Sprintf("node %s is shutting down", dn.node.ID().Address)
-		if err := dn.node.SendMessage(context.TODO(), dn.bossAddr, MessageTypes.NodeToBoss{Report: s}); err != nil {
-			panic(err)
-		}
-		dn.online = false
-	case "step":
-		dn.wait = false
-	case "work":
-		switch p {
-		case "1":
-			if resource.LockResourceOne() {
-				dn.enqueue(dn.queue, MessageTypes.BossToNode{
-					Command: "release",
-					Param:   "1",
-				})
-			} else {
-
-			}
-		case "2":
-			if resource.LockResourceTwo() {
-				dn.enqueue(dn.queue, MessageTypes.BossToNode{
-					Command: "release",
-					Param:   "2",
-				})
-			}
-		}
-	case "setLocalDependence":
-		dn.selfLocalDependence = true
-	case "release":
-		switch p {
-		case "1":
-			resource.UnlockResourceOne()
-		case "2":
-			resource.UnlockResourceTwo()
+func (dn *DeadlockNode) doWork(work int) {
+	//randomly chose prime number function as the work function
+	//intentionally unoptimized
+	var prime = false
+	for i := 2; i <= int(math.Floor(float64(work)/2)); i++ {
+		if work%i == 0 {
+			prime = false
 		}
 	}
+	if prime { //if the value is prime, send a token to all dependants
+		for _, dependant := range dn.dependsOnMe {
+			dn.messageNode(dependant.Address, "produced")
+		}
+	} else { //if its not prime, send one token to a random dependant
+		rand.Seed(time.Now().UnixNano())
+		randomPos := rand.Intn(len(dn.dependsOnMe) - 1)
+		dependant := dn.dependsOnMe[randomPos]
+		dn.messageNode(dependant.Address, "produced")
+	}
+}
+
+func (dn *DeadlockNode) emptyMessageQueue() {
+	if !dn.messageQueue.Empty() {
+		items, err := dn.messageQueue.Get(dn.messageQueue.Len() - 1)
+		if err != nil {
+			fmt.Println(err)
+		} else {
+			for _, item := range items {
+				messageWrap := item.(MessageTypes.MessageWrapper)
+				message := messageWrap.Message
+				sender := messageWrap.Sender
+				switch v := message.(type) {
+				case MessageTypes.DeadLock:
+					//todo deadlock shit
+				case MessageTypes.Probe:
+					dn.receiveProbe(v)
+				case MessageTypes.BossToNode:
+					dn.respondCommand(v.Command, v.Param, sender)
+				default:
+					//intentional empty statement
+				}
+			}
+		}
+	}
+}
+func (dn *DeadlockNode) respondCommand(command string, p string, sender noise.ID) {
+	switch command {
+	case "shutdown":
+		s := fmt.Sprintf("node %s is shutting down", dn.node.ID().Address)
+		dn.messageBoss(s)
+		dn.online = false
+	case "step":
+		s := fmt.Sprintf("node %s is commencing a step", dn.node.ID().Address)
+		dn.messageBoss(s)
+		dn.wait = false
+	case "setup":
+		s := fmt.Sprintf("node %s is commencing setup", dn.node.ID().Address)
+		dn.messageBoss(s)
+		dn.setupOutSiteDepend()
+		if len(dn.workReqList) != 0 {
+			dn.workToken = 0 //enabling worktokens
+		}
+	case "work":
+		if len(dn.workReqList) > 0 {
+			var ready = true
+			for _, value := range dn.workReqList { //check if all the required work has been complete
+				if value == 0 {
+					ready = false
+				}
+			}
+			if ready {
+				for key, value := range dn.workReqList { //reduce all counts by 1 and create a token
+					dn.workReqList[key] = value - 1
+				}
+				dn.workToken = dn.workToken + 1
+			}
+			value, err := strconv.Atoi(p)
+			if err != nil {
+				fmt.Println(err)
+			} else {
+				_ = dn.workQueue.Put(value)
+			}
+		}
+	case "produced":
+		value := dn.workReqList[sender.Address]
+		dn.workReqList[sender.Address] = value + 1
+	case "setLocalDependence":
+		s := fmt.Sprintf("node %s has enabled Self Local Dependence", dn.node.ID().Address)
+		dn.messageBoss(s)
+		dn.selfLocalDependence = true
+	case "depend":
+		dn.workReqList[sender.Address] = 0
+		dn.workToken = 0 //enabling worktokens
+	}
+}
+
+func (dn *DeadlockNode) setupOutSiteDepend() {
+	//this function randomly decides a node that will depend on THIS node
+	dn.network.Discover() //scan for all other nodes
+	table := dn.network.Table()
+	entries := table.Entries()       //collect all node ID
+	rand.Seed(time.Now().UnixNano()) //generate seed using current time
+	var randomDependant noise.ID
+	var foundDependant bool
+	var outsideSite bool
+	for !foundDependant {
+		randomPos := rand.Intn(len(entries) - 1)
+		randomDependant = entries[randomPos]
+		outsideSite = true
+		for _, mySiteNode := range dn.MySite.NodeList { //checks if the node picked is within this site or is this node
+			if mySiteNode.node.ID().Address == randomDependant.Address {
+				outsideSite = false
+			}
+		}
+		if randomDependant.Address != dn.bossAddr && outsideSite { //checking if its the boss
+			foundDependant = true
+		}
+	}
+	dn.dependsOnMe = append(dn.dependsOnMe, randomDependant)
+	dn.messageNode(randomDependant.Address, "depend")
 }
 
 func (dn *DeadlockNode) sendProbe(i noise.ID, j noise.ID, k noise.ID) {
@@ -187,7 +283,7 @@ func (dn *DeadlockNode) receiveProbe(probe MessageTypes.Probe) {
 	      4. Send probe (i, m, n) to the home site of process Pn if above conditions satisfy.
 
 	*/
-	if !dn.block && !dn.dependant[probe.ProcessI.String()] && len(dn.queue) != 0 {
+	if !dn.block && !dn.dependant[probe.ProcessI.String()] && !dn.messageQueue.Empty() {
 		dn.dependant[probe.ProcessI.String()] = true
 		myID := dn.node.ID()
 		if myID.String() == probe.ProcessI.String() {
@@ -196,17 +292,6 @@ func (dn *DeadlockNode) receiveProbe(probe MessageTypes.Probe) {
 			dn.sendProbe(probe.ProcessI, probe.ProcessI, probe.ProcessI) //todo this is completely wrong
 		}
 	}
-}
-
-func (dn *DeadlockNode) enqueue(queue []noise.Serializable, element noise.Serializable) []noise.Serializable {
-	queue = append(queue, element) // append to enqueue.
-	fmt.Println("adding to queue")
-	return queue
-}
-
-func (dn *DeadlockNode) dequeue(queue []noise.Serializable) ([]noise.Serializable, noise.Serializable) { //slices are weird
-	element := queue[0]       // The first element is the one to be dequeued.
-	return queue[1:], element // Slice off the element once it is dequeued.
 }
 
 func (dn *DeadlockNode) messageAllDeadlock(reason string) {
@@ -220,5 +305,20 @@ func (dn *DeadlockNode) messageAllDeadlock(reason string) {
 			MessageTypes.DeadLock{Deadlock: reason}); err != nil {
 			fmt.Println(err)
 		}
+	}
+}
+
+func (dn *DeadlockNode) messageBoss(report string) {
+	if err := dn.node.SendMessage(context.TODO(), dn.bossAddr, MessageTypes.NodeToBoss{Report: report}); err != nil {
+		panic(err)
+	}
+}
+func (dn *DeadlockNode) messageNode(address string, message string) {
+	if err := dn.node.SendMessage(context.TODO(), address,
+		MessageTypes.BossToNode{
+			Command: message,
+			Param:   "",
+		}); err != nil {
+		fmt.Println(err)
 	}
 }

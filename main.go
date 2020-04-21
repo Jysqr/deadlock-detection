@@ -5,10 +5,10 @@ import (
 )
 
 var (
-	node GUINode
-	gui  ui.DeadlockSimulatorGUI
+	node *ui.GUINode
 )
 
 func main() {
-
+	node = ui.NewGUINode(4999)
+	node.Run()
 }
