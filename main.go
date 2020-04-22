@@ -2,13 +2,16 @@ package main
 
 import (
 	"deadlock-detection/ui"
+	"fmt"
 )
 
 var (
-	node *ui.GUINode
+	guiNode *ui.GUINode
 )
 
 func main() {
-	node = ui.NewGUINode(4999)
-	node.Run()
+	guiNode = ui.NewGUINode(4999)
+	fmt.Println(guiNode.BossNode.Addr())
+	guiNode.Run()
+
 }

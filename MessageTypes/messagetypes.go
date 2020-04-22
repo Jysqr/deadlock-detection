@@ -52,9 +52,9 @@ func (e NodeToBoss) String() string {
 //probe for deadlock detection algorithm
 
 type Probe struct {
-	ProcessI noise.ID
-	ProcessJ noise.ID
-	ProcessK noise.ID
+	ProcessI string
+	ProcessJ string
+	ProcessK string
 }
 
 func (e Probe) String() string {

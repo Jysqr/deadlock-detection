@@ -10,8 +10,17 @@ import (
 	"github.com/therecipe/qt/core"
 	"github.com/therecipe/qt/gui"
 	"github.com/therecipe/qt/widgets"
+	"math/rand"
 	"os"
 	"strconv"
+	"time"
+)
+
+var ( //tunables for timings
+	stepMinTime            = 5     //in seconds
+	workSendInterval       = 5     //equals (stepMinTime * workSendInterval) seconds
+	maxPrimeCandidateValue = 25000 //these two are for the work sent to the nodes
+	minPrimeCandidateValue = 500
 )
 
 type GUINode struct {
@@ -19,26 +28,30 @@ type GUINode struct {
 	app            *widgets.QApplication
 	numSite        int
 	numNodePerSite int
-	bossNode       *noise.Node
+	BossNode       *noise.Node
 	network        *kademlia.Protocol
 	siteList       []*DeadlockSite.Site
 	totalNode      int
 	step           bool
-	x              int
-	y              int
+	stop           chan struct{}
+	//junk
+	x int
+	y int
 }
 
 func NewGUINode(port uint16) *GUINode {
-	newNode, _ := noise.NewNode(noise.WithNodeBindPort(port))
-
+	newNode, err := noise.NewNode()
+	if err != nil {
+		fmt.Println(err)
+	}
 	guiNode := &GUINode{
 		app:      widgets.NewQApplication(len(os.Args), os.Args),
 		frontend: NewDeadlockDetectionSimulator(nil),
-		bossNode: newNode,
+		BossNode: newNode,
 		network:  kademlia.New(),
 		step:     false,
+		stop:     make(chan struct{}),
 	}
-
 	newNode.Bind(guiNode.network.Protocol())
 	newNode.RegisterMessage(MessageTypes.BossToNode{}, MessageTypes.UnmarshalBossToNode)
 	newNode.RegisterMessage(MessageTypes.NodeToBoss{}, MessageTypes.UnmarshalNodeToBoss)
@@ -65,6 +78,9 @@ func NewGUINode(port uint16) *GUINode {
 	guiNode.frontend.DrawArea.ConnectMousePressEvent(guiNode.paint)
 	guiNode.frontend.StepCheckBox.ConnectClicked(guiNode.stepChecked)
 	guiNode.frontend.StartPauseButton.SetDisabled(true)
+	if err := guiNode.BossNode.Listen(); err != nil {
+		panic(err)
+	}
 	return guiNode
 }
 
@@ -81,7 +97,7 @@ func (gNode *GUINode) messageAllCommand(c string, p string) {
 	table := gNode.network.Table()
 	entries := table.Entries()
 	for _, con := range entries {
-		if err := gNode.bossNode.SendMessage(context.TODO(), con.Address, MessageTypes.BossToNode{Command: c, Param: p}); err != nil {
+		if err := gNode.BossNode.SendMessage(context.TODO(), con.Address, MessageTypes.BossToNode{Command: c, Param: p}); err != nil {
 			fmt.Println(err)
 		}
 	}
@@ -98,32 +114,48 @@ func (gNode *GUINode) okPressed(bool) {
 func (gNode *GUINode) startPressed(bool) {
 	switch gNode.frontend.StartPauseButton.Text() {
 	case "Start":
+		gNode.stop = make(chan struct{})
 		for i := 0; i < gNode.numSite; i++ { //builds the nodes and gives them their init parameters
-			newSite := DeadlockSite.NewSite(gNode.bossNode.Addr(), gNode.numNodePerSite, gNode.totalNode)
-			gNode.siteList = append(gNode.siteList, newSite)
+			newSite := DeadlockSite.NewSite(gNode.BossNode.Addr(), gNode.numNodePerSite, gNode.totalNode, gNode.siteList[:])
+			gNode.siteList[i] = newSite
 		}
 		if gNode.step {
 			gNode.frontend.StartPauseButton.SetText("Step")
 		} else {
 			gNode.frontend.StartPauseButton.SetText("Pause")
+			go gNode.autoStep(gNode.stop)
 		}
 	case "Pause":
 		gNode.frontend.StartPauseButton.SetText("Start")
-		//todo pause work
+		close(gNode.stop)
 	case "Step":
-		//todo stepstuff
-
+		gNode.frontend.StepCheckBox.SetDisabled(true)
+		gNode.frontend.StartPauseButton.SetDisabled(true)
+		gNode.messageAllCommand("step", "")
+		time.Sleep(time.Duration(stepMinTime) * time.Second)
+		gNode.frontend.StepCheckBox.SetDisabled(false)
+		gNode.frontend.StartPauseButton.SetDisabled(false)
 	}
-	/*
-		time.Sleep(2 * time.Second)
-		gNode.messageAllCommand("shutdown", "")
-		time.Sleep(5 * time.Second)
-		fmt.Println("exiting..")
-	*/
 }
 
-func (gNode *GUINode) sendWork(target noise.ID) {
-	//todo prime number stuff
+func (gNode *GUINode) autoStep(stop <-chan struct{}) {
+	counter := 0
+	for {
+		select {
+		default:
+			gNode.messageAllCommand("step", "")
+			if counter%workSendInterval == 0 {
+				rand.Seed(time.Now().UnixNano())
+				randPrimeCandidate := rand.Intn(maxPrimeCandidateValue-minPrimeCandidateValue+1) + minPrimeCandidateValue
+				gNode.messageAllCommand("work", strconv.Itoa(randPrimeCandidate))
+			}
+			counter = counter + 1
+		case <-stop: // triggered when the stop channel is closed
+			break // exit
+		}
+		time.Sleep(time.Duration(stepMinTime) * time.Second)
+	}
+
 }
 
 func (gNode *GUINode) stepChecked(bool) {
@@ -147,11 +179,3 @@ func (gNode *GUINode) reset() {
 	fmt.Println("reset")
 
 }
-
-/*
-Possible boss to node Commands:
-shutdown
-step
-work + param
-setLocalDependence
-*/
