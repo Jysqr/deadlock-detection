@@ -44,6 +44,7 @@ type DeadlockDetectionSimulator struct {
 	ConsoleCheckBox    *widgets.QCheckBox
 	Menubar            *widgets.QMenuBar
 	MenuFile           *widgets.QMenu
+	StatusBar          *widgets.QStatusBar
 }
 
 func NewDeadlockDetectionSimulator(p widgets.QWidget_ITF) *DeadlockDetectionSimulator {
@@ -98,6 +99,7 @@ func (w *DeadlockDetectionSimulator) setupUI() {
 	w.SiteSpinBox.SetObjectName("siteSpinBox")
 	w.SiteSpinBox.SetMinimum(2)
 	w.SiteSpinBox.SetMaximum(4)
+	w.SiteSpinBox.SetValue(2)
 	w.VerticalLayout_2.QLayout.AddWidget(w.SiteSpinBox)
 	w.Numlayout.QLayout.AddWidget(w.Numpersite)
 	w.Numsite = widgets.NewQWidget(w.Numberinfo, 0)
@@ -188,6 +190,9 @@ func (w *DeadlockDetectionSimulator) setupUI() {
 	w.MenuFile = widgets.NewQMenu(w.Menubar)
 	w.MenuFile.SetObjectName("menuFile")
 	w.SetMenuBar(w.Menubar)
+	w.StatusBar = widgets.NewQStatusBar(w)
+	w.StatusBar.SetObjectName("statusBar")
+	w.SetStatusBar(w.StatusBar)
 	if true {
 		w.Label.SetBuddy(w.SiteSpinBox)
 		w.Label_2.SetBuddy(w.NodeSpinBox)

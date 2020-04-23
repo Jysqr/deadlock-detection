@@ -32,6 +32,7 @@ func UnmarshalBossToNode(b []byte) (BossToNode, error) {
 
 type NodeToBoss struct {
 	Report string
+	Status int
 }
 
 func (e NodeToBoss) Marshal() []byte {

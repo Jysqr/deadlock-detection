@@ -13,6 +13,7 @@ import (
 	"time"
 )
 
+//represents a node in a network
 type DeadlockNode struct {
 	online              bool
 	block               bool
@@ -26,14 +27,14 @@ type DeadlockNode struct {
 	selfLocalDependence bool
 	messageQueue        *queue.PriorityQueue
 	workQueue           *queue.Queue
-	siteDependency      string
 	dependsOnMe         []string       //this is to know where to send completed work.
-	workReqList         map[string]int //string is a node address, fills with work completed by other nodes. producer/consumer
+	producerList        map[string]int //string is a node address, fills with work completed by other nodes. producer/consumer
 	workWaitList        []string
 	MySite              *Site
+	MyAddress           string
 }
 
-func NewDeadlockNode(address string, count int, site *Site, depend string) *DeadlockNode {
+func NewDeadlockNode(address string, count int, site *Site, siteDepend string) *DeadlockNode {
 	newNode, _ := noise.NewNode()
 	dn := &DeadlockNode{
 		online:              true,
@@ -45,12 +46,10 @@ func NewDeadlockNode(address string, count int, site *Site, depend string) *Dead
 		node:                newNode,
 		bossAddr:            address,
 		workToken:           -1,
-		siteDependency:      depend,
 		MySite:              site,
 		messageQueue:        queue.NewPriorityQueue(50),
-		workReqList:         make(map[string]int),
+		producerList:        make(map[string]int),
 		dependant:           make(map[string]bool),
-		dependsOnMe:         make([]string, site.TotalNodeCount),
 		workQueue:           queue.New(50),
 	}
 	dn.node.Bind(dn.network.Protocol())
@@ -76,28 +75,36 @@ func NewDeadlockNode(address string, count int, site *Site, depend string) *Dead
 		}
 		return nil
 	})
-	if depend != "" {
-		dn.workReqList[depend] = 0
-		dn.messageNode(depend, "depend")
+	if siteDepend != "" {
+		dn.dependsOnMe[0] = siteDepend
+		dn.messageNode(siteDepend, "depend")
 	}
-	if err := dn.node.Listen(); err != nil {
-		panic(err)
-	}
-	/*	if _, err := dn.node.Ping(context.TODO(), dn.bossAddr); err != nil { //making sure that node can communicate with boss
-		panic(err) //this error is fatal for the node.
-	}*/
+
 	return dn
 }
 
 func (dn *DeadlockNode) Start() {
+	if err := dn.node.Listen(); err != nil {
+		panic(err)
+	}
+	s := fmt.Sprintf("node %s has started", dn.node.ID().Address)
+	dn.messageBoss(s, 0)
+	dn.MyAddress = dn.node.Addr()
 	stop := make(chan struct{})
+	dn.block = true
 	go dn.emptyMessageQueue(stop) //goroutine to parse messages into work and tokens
+	for dn.block {                //wait for setup command to come and be completed
+
+	}
 	for dn.online {
+		for dn.wait {
+			//waiting for next step command
+		}
 		if dn.selfLocalDependence {
 			dn.sendProbe(dn.node.ID().Address) //node has no tokens, time to check for deadlock
 		} else if dn.messageQueue.Empty() && dn.workQueue.Empty() {
 			s := fmt.Sprintf("node %s is waiting due to no work", dn.node.ID().Address)
-			dn.messageBoss(s)
+			dn.messageBoss(s, 1)
 			dn.wait = true
 		} else if !dn.workQueue.Empty() && dn.workToken != 0 {
 			dn.workToken = dn.workToken - 1
@@ -108,23 +115,19 @@ func (dn *DeadlockNode) Start() {
 				dn.doWork(value[0].(int))
 			}
 			s := fmt.Sprintf("node %s is waiting after completing work", dn.node.ID().Address)
-			dn.messageBoss(s)
+			dn.messageBoss(s, 2)
 			dn.wait = true
 		} else if !dn.workQueue.Empty() && dn.workToken == 0 {
-			for key, value := range dn.workReqList {
+			for key, value := range dn.producerList {
 				if value == 0 {
 					dn.workWaitList = append(dn.workWaitList, key)
 				}
 			}
 			dn.sendProbe(dn.node.ID().Address) //node has no tokens, time to check for deadlock
 			s := fmt.Sprintf("node %s is waiting after unable to complete work (no token)", dn.node.ID().Address)
-			dn.messageBoss(s)
+			dn.messageBoss(s, 1)
 
 			dn.wait = true
-		}
-
-		for dn.wait {
-			//waiting for next step command
 		}
 	}
 	close(stop)
@@ -140,26 +143,31 @@ func (dn *DeadlockNode) doWork(work int) {
 			prime = false
 		}
 	}
+	var sentTo string
 	if prime { //if the value is prime, send a token to all dependants
 		for _, dependant := range dn.dependsOnMe {
 			dn.messageNode(dependant, "produced")
+			sentTo = sentTo + dependant + " "
 		}
 	} else { //if its not prime, send one token to a random dependant
 		rand.Seed(time.Now().UnixNano())
-		randomPos := rand.Intn(len(dn.dependsOnMe) - 1)
+		randomPos := rand.Intn(len(dn.dependsOnMe))
 		dependant := dn.dependsOnMe[randomPos]
 		dn.messageNode(dependant, "produced")
 	}
+
+	s := fmt.Sprintf("%s", sentTo)
+	dn.messageBoss(s, -2)
 }
 
 func (dn *DeadlockNode) emptyMessageQueue(done <-chan struct{}) {
-	for {
+	for { //for loops keeps the goroutine running
 		select {
-		case <-done:
+		case <-done: //if the channel closes, the goroutine is shutdown
 			return
-		default:
+		default: //this is always ran unless the channel is closed
 			if !dn.messageQueue.Empty() {
-				items, err := dn.messageQueue.Get(dn.messageQueue.Len() - 1)
+				items, err := dn.messageQueue.Get(dn.messageQueue.Len())
 				if err != nil {
 					fmt.Println(err)
 				} else {
@@ -169,7 +177,8 @@ func (dn *DeadlockNode) emptyMessageQueue(done <-chan struct{}) {
 						sender := messageWrap.Sender
 						switch v := message.(type) {
 						case MessageTypes.DeadLock:
-							panic("deadlock")
+							dn.online = false
+							dn.messageBoss("deadlock declared", 4)
 						case MessageTypes.Probe:
 							dn.receiveProbe(v)
 						case MessageTypes.BossToNode:
@@ -188,43 +197,44 @@ func (dn *DeadlockNode) respondCommand(command string, p string, sender noise.ID
 	switch command {
 	case "shutdown":
 		s := fmt.Sprintf("node %s is shutting down", dn.node.ID().Address)
-		dn.messageBoss(s)
+		dn.messageBoss(s, 0)
 		dn.online = false
 	case "step":
-		s := fmt.Sprintf("node %s is commencing a step", dn.node.ID().Address)
-		dn.messageBoss(s)
 		dn.wait = false
 	case "setup":
-		s := fmt.Sprintf("node %s is commencing setup", dn.node.ID().Address)
-		dn.messageBoss(s)
 		dn.setupOutSiteDepend()
-		if len(dn.workReqList) != 0 {
+		s := fmt.Sprintf("node %s begins setup", dn.node.ID().Address)
+		dn.messageBoss(s, 0)
+		if len(dn.producerList) != 0 {
 			dn.workToken = 0 //enabling worktokens
 		}
+		dn.block = false
+		s = fmt.Sprintf("node %s complete3 setup", dn.node.ID().Address)
+		dn.messageBoss(s, 1)
 	case "work":
-		if len(dn.workReqList) > 0 {
+		if len(dn.producerList) > 0 {
 			var ready = true
-			for _, value := range dn.workReqList { //check if all the required work has been complete
+			for _, value := range dn.producerList { //check if all the required work has been complete
 				if value == 0 {
 					ready = false
 				}
 			}
 			if ready {
-				for key, value := range dn.workReqList { //reduce all counts by 1 and create a token
-					dn.workReqList[key] = value - 1
+				for key, value := range dn.producerList { //reduce all counts by 1 and create a token
+					dn.producerList[key] = value - 1
 				}
 				dn.workToken = dn.workToken + 1
 			}
-			value, err := strconv.Atoi(p)
-			if err != nil {
-				fmt.Println(err)
-			} else {
-				_ = dn.workQueue.Put(value)
-			}
+		}
+		value, err := strconv.Atoi(p)
+		if err != nil {
+			fmt.Println(err)
+		} else {
+			_ = dn.workQueue.Put(value)
 		}
 	case "produced":
-		value := dn.workReqList[sender.Address]
-		dn.workReqList[sender.Address] = value + 1
+		value := dn.producerList[sender.Address]
+		dn.producerList[sender.Address] = value + 1
 		var tempWorkWaitList []string
 		copy(tempWorkWaitList, dn.workWaitList)
 		counter := 0
@@ -239,11 +249,13 @@ func (dn *DeadlockNode) respondCommand(command string, p string, sender noise.ID
 		dn.workWaitList = tempWorkWaitList[:len(tempWorkWaitList)-counter]
 	case "setLocalDependence":
 		s := fmt.Sprintf("node %s has enabled Self Local Dependence", dn.node.ID().Address)
-		dn.messageBoss(s)
+		dn.messageBoss(s, -1)
 		dn.selfLocalDependence = true
 	case "depend":
-		dn.workReqList[sender.Address] = 0
+		dn.producerList[sender.Address] = 0
 		dn.workToken = 0 //enabling worktokens
+		s := fmt.Sprintf("node %s added a producer %s", dn.node.ID().Address, sender.Address)
+		dn.messageBoss(s, 1)
 	}
 }
 
@@ -291,7 +303,7 @@ func (dn *DeadlockNode) sendProbe(processI string) {
 		dn.messageAllDeadlock(s)
 	} else {
 		processKList := make(map[string]string)
-		for key := range dn.workReqList { //workreqlist is all the j that this node are locally dependent on
+		for key := range dn.producerList { //workreqlist is all the j that this node are locally dependent on
 			for _, site := range dn.MySite.SiteList { //searching every site
 				for _, node := range site.NodeList { //searching every node within each site
 					if node.node.ID().Address == key { //4 nested for each loops. nice.
@@ -314,6 +326,10 @@ func (dn *DeadlockNode) sendProbe(processI string) {
 				if err := dn.node.SendMessage(context.TODO(), probe.ProcessK, probe); err != nil {
 					panic(err)
 				}
+				s := fmt.Sprintf("node %s sent probe to %s", dn.node.ID().Address, probe.ProcessK)
+				dn.messageBoss(s, 3)
+				s = fmt.Sprintf("%s", probe.ProcessK)
+				dn.messageBoss(s, -3)
 			}
 
 		}
@@ -346,11 +362,11 @@ func (dn *DeadlockNode) receiveProbe(probe MessageTypes.Probe) {
 	if !dn.block && !dn.dependant[probe.ProcessI] && !dn.workQueue.Empty() {
 		dn.dependant[probe.ProcessI] = true
 		myID := dn.node.ID()
-		if myID.String() == probe.ProcessI {
+		if myID.Address == probe.ProcessI {
 			dn.messageAllDeadlock("Cyclical wait detected")
 		} else {
 			processKList := make(map[string]string)
-			for key := range dn.workReqList { //workreqlist is all the j that this node are locally dependent on
+			for key := range dn.producerList { //workreqlist is all the j that this node are locally dependent on
 				for _, site := range dn.MySite.SiteList { //searching every site
 					for _, node := range site.NodeList { //searching every node within each site
 						if node.node.ID().Address == key { //4 nested for each loops. nice.
@@ -373,6 +389,10 @@ func (dn *DeadlockNode) receiveProbe(probe MessageTypes.Probe) {
 					if err := dn.node.SendMessage(context.TODO(), newProbe.ProcessK, probe); err != nil {
 						panic(err)
 					}
+					s := fmt.Sprintf("node %s sent probe after receiving to %s", dn.node.ID().Address, newProbe.ProcessK)
+					dn.messageBoss(s, 3)
+					s = fmt.Sprintf("%s", probe.ProcessK)
+					dn.messageBoss(s, -3)
 				}
 
 			}
@@ -394,8 +414,8 @@ func (dn *DeadlockNode) messageAllDeadlock(reason string) {
 	}
 }
 
-func (dn *DeadlockNode) messageBoss(report string) {
-	if err := dn.node.SendMessage(context.TODO(), dn.bossAddr, MessageTypes.NodeToBoss{Report: report}); err != nil {
+func (dn *DeadlockNode) messageBoss(report string, status int) {
+	if err := dn.node.SendMessage(context.TODO(), dn.bossAddr, MessageTypes.NodeToBoss{Report: report, Status: status}); err != nil {
 		panic(err)
 	}
 }

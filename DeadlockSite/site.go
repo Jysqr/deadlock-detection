@@ -1,9 +1,6 @@
 package DeadlockSite
 
-import (
-	"fmt"
-	"strconv"
-)
+//creates nodes
 
 type Site struct {
 	siteNodeCount  int
@@ -22,15 +19,13 @@ func NewSite(bossNodeAddr string, numNode int, totalNode int, siteList []*Site) 
 	for i := 0; i < numNode; i++ { //builds the nodes and gives them their init parameters
 		var dependence string
 		if i > 0 {
-			fmt.Println(strconv.Itoa(i))
-			fmt.Println(site.NodeList)
 			dependence = site.NodeList[i-1].node.ID().Address
 		} else {
 			dependence = ""
 		}
 		dn := NewDeadlockNode(bossNodeAddr, numNode, site, dependence)
 		go func(node *DeadlockNode) {
-			dn.Start()
+			node.Start()
 		}(dn)
 		site.NodeList[i] = dn
 	}
